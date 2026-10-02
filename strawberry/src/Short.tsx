@@ -1,9 +1,9 @@
 import React from "react";
-import { AbsoluteFill, Audio, Sequence, interpolate, spring, staticFile, useCurrentFrame, useVideoConfig, Easing } from "remotion";
+import { AbsoluteFill, Audio, Sequence, interpolate, spring, staticFile, useCurrentFrame, Easing } from "remotion";
 
 const FPS = 30;
 const C = {
-  bg: "#0b1020",
+  navy: "#0b1020",
   panel: "#161d34",
   text: "#f3f5fb",
   dim: "#8b93ad",
@@ -11,60 +11,79 @@ const C = {
   green: "#3ddc97",
   yellow: "#ffd166",
   blue: "#5aa9ff",
+  ink: "#10131f",
 };
 const SANS = "Inter, 'Helvetica Neue', Arial, 'DejaVu Sans', sans-serif";
 const MONO = "'DejaVu Sans Mono', 'Courier New', monospace";
-
-// Scene starts in seconds (volgt de tijden uit het script)
-const STARTS = [0, 5.6, 14, 28, 42, 54];
-const END = 60;
-export const TOTAL_FRAMES = END * FPS;
+const WORD = "strawberry";
+const R_IDX = [2, 7, 8];
 
 const clamp = { extrapolateLeft: "clamp", extrapolateRight: "clamp" } as const;
-const ease = Easing.out(Easing.cubic);
+const outCubic = Easing.out(Easing.cubic);
+const inCubic = Easing.in(Easing.cubic);
+const pop = (f: number, at: number, damping = 11, stiffness = 230) => spring({ frame: f - at, fps: FPS, config: { damping, stiffness } });
+const rnd = (n: number) => {
+  const x = Math.sin(n * 127.1 + 311.7) * 43758.5453;
+  return x - Math.floor(x);
+};
+const shake = (f: number, at: number, amp = 18, len = 10) => {
+  const t = f - at;
+  if (t < 0 || t > len) return { x: 0, y: 0 };
+  const k = 1 - t / len;
+  return { x: (rnd(f) - 0.5) * 2 * amp * k, y: (rnd(f + 99) - 0.5) * 2 * amp * k };
+};
 
-// ---------- Captions (zinsniveau, tijd verdeeld over de echte audioduur) ----------
-const AUDIO_OFFSET = 0.3;
-const SCENES: { sentences: string[]; audioDur: number }[] = [
-  { sentences: ["Een AI die een examen haalt,", "maar niet kan tellen hoeveel R's er in 'strawberry' zitten.", "Hoe kan dat?"], audioDur: 5.02 },
-  { sentences: ["Het antwoord is drie.", "Dat zie jij in één seconde.", "Maar het model ziet dit woord helemaal niet zoals jij."], audioDur: 5.36 },
-  { sentences: ["Een taalmodel leest geen letters.", "Voordat het je tekst ziet, wordt die in stukjes gehakt, tokens.", "'Strawberry' wordt bijvoorbeeld 'str', 'aw' en 'berry'.", "En elk stukje wordt een getal."], audioDur: 9.42 },
-  { sentences: ["Het is alsof ik jou vraag hoeveel R's er in dit plaatje zitten.", "Je ziet geen letters, je ziet één ding.", "Zo ziet het model het hele woord."], audioDur: 7.07 },
-  { sentences: ["Hoe krijgt hij het dan soms toch goed?", "Omdat hij het woord kan uitschrijven, letter voor letter,", "en dan wel kan tellen."], audioDur: 6.05 },
-  { sentences: ["Dus dit is geen domheid.", "Het model kijkt gewoon door een bril waar letters niet in passen."], audioDur: 4.59 },
-];
-
-const Caption: React.FC<{ scene: number }> = ({ scene }) => {
+// ---------- Achtergronden ----------
+type BgKind = "navy" | "yellow" | "white" | "red" | "blue" | "black";
+const BG: Record<BgKind, { bg: string; fg: string }> = {
+  navy: { bg: C.navy, fg: C.text },
+  yellow: { bg: C.yellow, fg: C.ink },
+  white: { bg: "#f5f2ea", fg: C.ink },
+  red: { bg: C.red, fg: "#fff" },
+  blue: { bg: "#143a8f", fg: "#fff" },
+  black: { bg: "#000", fg: "#fff" },
+};
+const Background: React.FC<{ kind: BgKind }> = ({ kind }) => {
   const f = useCurrentFrame();
-  const { sentences, audioDur } = SCENES[scene];
-  const total = sentences.reduce((a, s) => a + s.length, 0);
-  let t = AUDIO_OFFSET * FPS;
-  const dur = audioDur * FPS;
-  let shown: string | null = null;
-  for (const s of sentences) {
-    const d = (s.length / total) * dur;
-    if (f >= t && f < t + d) shown = s;
-    t += d;
-  }
-  if (!shown) return null;
+  const { bg, fg } = BG[kind];
+  const dark = kind === "navy" || kind === "black" || kind === "blue";
   return (
-    <div style={{ position: "absolute", left: 60, right: 60, top: 1500, display: "flex", justifyContent: "center" }}>
-      <div
-        style={{
-          background: "rgba(0,0,0,0.62)",
-          color: C.text,
-          fontFamily: SANS,
-          fontWeight: 700,
-          fontSize: 50,
-          lineHeight: 1.25,
-          textAlign: "center",
-          padding: "18px 30px",
-          borderRadius: 24,
-        }}
-      >
-        {shown}
-      </div>
-    </div>
+    <AbsoluteFill style={{ background: bg, overflow: "hidden" }}>
+      {kind !== "black" && (
+        <AbsoluteFill
+          style={{
+            backgroundImage: `linear-gradient(${fg}${dark ? "14" : "12"} 2px, transparent 2px), linear-gradient(90deg, ${fg}${dark ? "14" : "12"} 2px, transparent 2px)`,
+            backgroundSize: "120px 120px",
+            backgroundPosition: `${(f * 3) % 120}px ${(f * 2) % 120}px`,
+          }}
+        />
+      )}
+      {dark && kind !== "black" && (
+        <AbsoluteFill style={{ background: "radial-gradient(circle at 50% 45%, rgba(90,169,255,0.20), transparent 60%)" }} />
+      )}
+    </AbsoluteFill>
+  );
+};
+
+// ---------- Shot: zoom-in bij binnenkomen, zoom-through bij vertrek, constante push ----------
+type ShotDef = { dur: number; bg: BgKind; flash?: "white" | "dark"; noIn?: boolean; noOut?: boolean; comp: React.FC<{ n: number }> };
+
+const Shot: React.FC<{ def: ShotDef; n: number; frames: number }> = ({ def, n, frames }) => {
+  const f = useCurrentFrame();
+  const inP = def.noIn ? 1 : interpolate(f, [0, 7], [0, 1], { ...clamp, easing: outCubic });
+  const outP = def.noOut ? 0 : interpolate(f, [frames - 5, frames], [0, 1], { ...clamp, easing: inCubic });
+  const push = interpolate(f, [0, frames], [1, 1.07], clamp);
+  const scale = (1.5 - 0.5 * inP) * (1 + 0.35 * outP) * push;
+  const flashOp = def.flash ? interpolate(f, [0, 8], [0.95, 0], clamp) : 0;
+  const Comp = def.comp;
+  return (
+    <AbsoluteFill>
+      <Background kind={def.bg} />
+      <AbsoluteFill style={{ transform: `scale(${scale})`, opacity: inP * (1 - 0.6 * outP), filter: inP < 1 ? `blur(${(1 - inP) * 14}px)` : undefined }}>
+        <Comp n={n} />
+      </AbsoluteFill>
+      {def.flash && <AbsoluteFill style={{ background: def.flash === "white" ? "#fff" : "#000", opacity: flashOp }} />}
+    </AbsoluteFill>
   );
 };
 
@@ -72,10 +91,7 @@ const Caption: React.FC<{ scene: number }> = ({ scene }) => {
 const Strawberry: React.FC<{ size: number }> = ({ size }) => (
   <svg width={size} height={size * 1.15} viewBox="0 0 200 230">
     <path d="M100 40 C 40 30, 8 80, 22 130 C 36 185, 80 220, 100 222 C 120 220, 164 185, 178 130 C 192 80, 160 30, 100 40 Z" fill={C.red} />
-    {[
-      [60, 85], [100, 80], [140, 85], [45, 120], [82, 118], [118, 118], [155, 120],
-      [62, 155], [100, 152], [138, 155], [80, 187], [120, 187], [100, 205],
-    ].map(([x, y], i) => (
+    {[[60, 85], [100, 80], [140, 85], [45, 120], [82, 118], [118, 118], [155, 120], [62, 155], [100, 152], [138, 155], [80, 187], [120, 187], [100, 205]].map(([x, y], i) => (
       <ellipse key={i} cx={x} cy={y} rx="5" ry="8" fill={C.yellow} transform={`rotate(-10 ${x} ${y})`} />
     ))}
     <path d="M100 48 C 80 20, 50 22, 40 36 C 62 38, 76 50, 100 48 Z" fill={C.green} />
@@ -84,47 +100,73 @@ const Strawberry: React.FC<{ size: number }> = ({ size }) => (
   </svg>
 );
 
-const Title: React.FC<{ children: React.ReactNode; color?: string }> = ({ children, color = C.dim }) => (
-  <div style={{ position: "absolute", top: 230, left: 0, right: 0, textAlign: "center", fontFamily: SANS, fontWeight: 800, fontSize: 44, letterSpacing: 4, color, textTransform: "uppercase" }}>
-    {children}
-  </div>
-);
-
-const Scene: React.FC<{ index: number; children: React.ReactNode }> = ({ index, children }) => {
-  const start = Math.round(STARTS[index] * FPS);
-  const end = Math.round((STARTS[index + 1] ?? END) * FPS);
+// Woorden die één voor één in beeld slaan
+const Slam: React.FC<{ words: { t: string; at: number; color?: string; size?: number }[]; size?: number; fg: string; lineGap?: number }> = ({ words, size = 150, fg, lineGap = 10 }) => {
+  const f = useCurrentFrame();
   return (
-    <Sequence from={start} durationInFrames={end - start}>
-      <AbsoluteFill>
-        {children}
-        <Caption scene={index} />
-      </AbsoluteFill>
-    </Sequence>
+    <AbsoluteFill style={{ alignItems: "center", justifyContent: "center", flexDirection: "column", gap: lineGap, padding: "0 60px" }}>
+      {words.map((w, i) => {
+        if (f < w.at) return <div key={i} style={{ height: (w.size ?? size) * 1.05 }} />;
+        const p = pop(f, w.at, 9, 260);
+        const s = 0.3 + 0.7 * p;
+        const sh = shake(f, w.at, 8, 6);
+        return (
+          <div
+            key={i}
+            style={{
+              fontFamily: SANS,
+              fontWeight: 900,
+              fontSize: w.size ?? size,
+              lineHeight: 1.02,
+              color: w.color ?? fg,
+              textAlign: "center",
+              letterSpacing: -2,
+              transform: `translate(${sh.x}px, ${sh.y}px) scale(${s})`,
+              opacity: Math.min(1, p * 3),
+            }}
+          >
+            {w.t}
+          </div>
+        );
+      })}
+    </AbsoluteFill>
   );
 };
 
-// ---------- Scene 1: chatvenster ----------
-const Scene1 = () => {
+const Letters: React.FC<{ size: number; w: number; highlight?: (i: number) => boolean; color?: string; style?: (i: number) => React.CSSProperties }> = ({ size, w, highlight, color = C.text, style }) => (
+  <div style={{ display: "flex", fontFamily: MONO, fontWeight: 700, fontSize: size }}>
+    {WORD.split("").map((ch, i) => {
+      const hi = highlight?.(i);
+      return (
+        <span key={i} style={{ width: w, textAlign: "center", display: "inline-block", color: hi ? C.red : color, textShadow: hi ? `0 0 40px ${C.red}` : undefined, ...(style?.(i) ?? {}) }}>
+          {ch}
+        </span>
+      );
+    })}
+  </div>
+);
+
+// ---------- Shots ----------
+// 1 hook
+const S1: React.FC<{ n: number }> = () => (
+  <Slam fg={C.text} size={170} words={[{ t: "Deze AI", at: 2 }, { t: "slaagt voor", at: 12 }, { t: "een examen", at: 20, color: C.yellow }]} />
+);
+
+// 2 chat
+const S2: React.FC<{ n: number }> = () => {
   const f = useCurrentFrame();
   const q = 'Hoeveel R\'s zitten er in "strawberry"?';
-  const typed = q.slice(0, Math.floor(interpolate(f, [15, 80], [0, q.length], clamp)));
-  const replyIn = spring({ frame: f - 108, fps: FPS, config: { damping: 12, stiffness: 140 } });
-  const showReply = f >= 108;
+  const typed = q.slice(0, Math.floor(interpolate(f, [4, 30], [0, q.length], clamp)));
+  const rp = pop(f, 36, 8, 200);
+  const sh = shake(f, 36, 22, 12);
   return (
-    <AbsoluteFill>
-      <div style={{ position: "absolute", left: 70, right: 70, top: 380, bottom: 520, background: C.panel, borderRadius: 40, border: "2px solid #26305a", overflow: "hidden" }}>
-        <div style={{ padding: "26px 40px", borderBottom: "2px solid #26305a", fontFamily: SANS, color: C.dim, fontSize: 38, fontWeight: 700, display: "flex", alignItems: "center", gap: 16 }}>
-          <div style={{ width: 18, height: 18, borderRadius: 9, background: C.green }} /> AI-chat
-        </div>
-        <div style={{ padding: 40, display: "flex", flexDirection: "column", gap: 40 }}>
-          <div style={{ alignSelf: "flex-end", maxWidth: 780, background: C.blue, color: "#06122a", fontFamily: SANS, fontWeight: 600, fontSize: 52, lineHeight: 1.3, padding: "26px 34px", borderRadius: "34px 34px 8px 34px", minHeight: 80 }}>
-            {typed}
-            {f < 90 && Math.floor(f / 8) % 2 === 0 ? "▍" : ""}
-          </div>
-          {showReply && (
-            <div style={{ alignSelf: "flex-start", background: "#222b4d", color: C.text, fontFamily: SANS, fontWeight: 800, fontSize: 170, padding: "10px 70px", borderRadius: "34px 34px 34px 8px", transform: `scale(${0.4 + 0.6 * replyIn})`, transformOrigin: "left bottom", opacity: replyIn }}>
-              2
-            </div>
+    <AbsoluteFill style={{ alignItems: "center", justifyContent: "center" }}>
+      <div style={{ width: 940, background: C.panel, borderRadius: 40, border: "2px solid #26305a", overflow: "hidden", transform: `translate(${sh.x}px, ${sh.y}px)` }}>
+        <div style={{ padding: "24px 40px", borderBottom: "2px solid #26305a", fontFamily: SANS, color: C.dim, fontSize: 36, fontWeight: 700 }}>● AI-chat</div>
+        <div style={{ padding: 40, display: "flex", flexDirection: "column", gap: 36, minHeight: 640 }}>
+          <div style={{ alignSelf: "flex-end", maxWidth: 760, background: C.blue, color: "#06122a", fontFamily: SANS, fontWeight: 600, fontSize: 50, lineHeight: 1.3, padding: "24px 32px", borderRadius: "34px 34px 8px 34px", minHeight: 80 }}>{typed}</div>
+          {f >= 36 && (
+            <div style={{ alignSelf: "flex-start", background: "#222b4d", color: C.red, fontFamily: SANS, fontWeight: 900, fontSize: 260, padding: "0 80px", borderRadius: "34px 34px 34px 8px", transform: `scale(${0.3 + 0.7 * rp})`, transformOrigin: "left bottom" }}>2</div>
           )}
         </div>
       </div>
@@ -132,186 +174,314 @@ const Scene1 = () => {
   );
 };
 
-// ---------- Scene 2: het woord, drie R's ----------
-const WORD = "strawberry";
-const R_IDX = [2, 7, 8];
-const Scene2 = () => {
+// 3 fout / goed
+const S3: React.FC<{ n: number }> = () => {
   const f = useCurrentFrame();
-  const hits = [45, 80, 115];
-  const count = hits.filter((h) => f >= h).length;
+  const p = pop(f, 2, 7, 220);
+  const p2 = pop(f, 22, 9, 240);
   return (
     <AbsoluteFill style={{ alignItems: "center", justifyContent: "center" }}>
-      <div style={{ display: "flex", fontFamily: MONO, fontWeight: 700, fontSize: 138 }}>
-        {WORD.split("").map((ch, i) => {
-          const ri = R_IDX.indexOf(i);
-          const on = ri >= 0 && f >= hits[ri];
-          const pop = ri >= 0 ? spring({ frame: f - hits[ri], fps: FPS, config: { damping: 10, stiffness: 200 } }) : 0;
-          return (
-            <span key={i} style={{ width: 92, textAlign: "center", color: on ? C.red : C.text, display: "inline-block", transform: on ? `scale(${1 + 0.35 * Math.sin(pop * Math.PI)})` : undefined, textShadow: on ? `0 0 40px ${C.red}` : undefined }}>
-              {ch}
-            </span>
-          );
-        })}
+      <div style={{ position: "relative", fontFamily: SANS, fontWeight: 900, fontSize: 900, color: "#fff", transform: `scale(${0.4 + 0.6 * p}) rotate(${f < 22 ? -4 : 0}deg)`, opacity: f < 22 ? 1 : 0 }}>
+        2
+        <div style={{ position: "absolute", left: -40, right: -40, top: "52%", height: 40, background: "#000", transform: `rotate(-12deg) scaleX(${interpolate(f, [10, 18], [0, 1], clamp)})` }} />
       </div>
-      <div style={{ marginTop: 90, fontFamily: SANS, fontWeight: 800, fontSize: 300, color: count === 3 ? C.green : C.dim, minHeight: 330 }}>{count > 0 ? count : ""}</div>
+      {f >= 22 && <div style={{ position: "absolute", fontFamily: SANS, fontWeight: 900, fontSize: 1000, color: "#fff", transform: `scale(${0.3 + 0.7 * p2})` }}>3</div>}
+      <div style={{ position: "absolute", bottom: 330, fontFamily: SANS, fontWeight: 900, fontSize: 80, color: "#fff", letterSpacing: 6, opacity: f >= 22 ? 1 : 0.0 }}>HET ANTWOORD</div>
     </AbsoluteFill>
   );
 };
 
-// ---------- Scene 3: tokens ----------
+// 4 camera zoomt in op elke R
+const S4: React.FC<{ n: number }> = () => {
+  const f = useCurrentFrame();
+  const W = 96;
+  const hits = [10, 25, 40];
+  const hitsDone = hits.filter((h) => f >= h).length;
+  const xs = [0, ...R_IDX.map((i) => (i - 4.5) * W)];
+  const cur = Math.max(0, hitsDone);
+  const hf = hits[Math.max(0, cur - 1)] ?? 0;
+  const p = cur > 0 ? pop(f, hf, 14, 200) : 1;
+  const camX = xs[cur - 1 >= 0 ? cur - 1 : 0] + (xs[cur] - xs[cur - 1 >= 0 ? cur - 1 : 0]) * p;
+  const zoomOut = interpolate(f, [52, 62], [0, 1], { ...clamp, easing: outCubic });
+  const camScale = cur === 0 ? 1 : (1.9 - 0.9 * zoomOut);
+  const tx = cur === 0 ? 0 : -camX * camScale * (1 - zoomOut);
+  return (
+    <AbsoluteFill style={{ alignItems: "center", justifyContent: "center" }}>
+      <div style={{ transform: `translateX(${tx}px) scale(${camScale})` }}>
+        <Letters size={140} w={W} highlight={(i) => { const ri = R_IDX.indexOf(i); return ri >= 0 && f >= hits[ri]; }} color={C.ink} />
+      </div>
+      <div style={{ position: "absolute", bottom: 300, display: "flex", gap: 40, fontFamily: SANS, fontWeight: 900, fontSize: 200, color: C.ink }}>
+        {[1, 2, 3].map((k) => (
+          <div key={k} style={{ opacity: hitsDone >= k ? 1 : 0.15, color: hitsDone >= k ? C.red : C.ink, transform: `scale(${hitsDone >= k ? 0.7 + 0.3 * pop(f, hits[k - 1]) : 1})` }}>{k}</div>
+        ))}
+      </div>
+    </AbsoluteFill>
+  );
+};
+
+// 5 oog doorgestreept
+const S5: React.FC<{ n: number }> = () => {
+  const f = useCurrentFrame();
+  const s = pop(f, 2, 10, 180);
+  const slash = interpolate(f, [18, 26], [0, 1], { ...clamp, easing: outCubic });
+  return (
+    <AbsoluteFill style={{ alignItems: "center", justifyContent: "center" }}>
+      <svg width="760" height="420" viewBox="0 0 760 420" style={{ transform: `scale(${s})`, marginTop: -180 }}>
+        <path d="M30 210 Q380 -60 730 210 Q380 480 30 210 Z" fill="#fff" stroke="#fff" strokeWidth="10" />
+        <circle cx="380" cy="210" r="110" fill={C.blue} />
+        <circle cx="380" cy="210" r="52" fill="#0b1020" />
+        <circle cx="350" cy="180" r="18" fill="#fff" />
+        <line x1="80" y1="400" x2={80 + 600 * slash} y2={400 - 400 * slash} stroke={C.red} strokeWidth="38" strokeLinecap="round" />
+      </svg>
+      <div style={{ position: "absolute", bottom: 380, left: 0, right: 0, textAlign: "center", fontFamily: SANS, fontWeight: 900, fontSize: 96, color: "#fff", lineHeight: 1.05, opacity: f > 8 ? 1 : 0, transform: `scale(${0.6 + 0.4 * pop(f, 8)})` }}>
+        Het model ziet<br />
+        <span style={{ color: C.yellow }}>geen letters</span>
+      </div>
+    </AbsoluteFill>
+  );
+};
+
+// 6 letters spatten uit elkaar
+const S6: React.FC<{ n: number }> = () => {
+  const f = useCurrentFrame();
+  const boom = 22;
+  return (
+    <AbsoluteFill style={{ alignItems: "center", justifyContent: "center" }}>
+      <Letters
+        size={140}
+        w={96}
+        color={C.ink}
+        style={(i) => {
+          if (f < boom) return {};
+          const t = (f - boom) / 14;
+          const dir = (rnd(i + 3) - 0.5) * 2;
+          return { transform: `translate(${dir * 900 * t}px, ${(rnd(i + 8) - 0.7) * 1400 * t}px) rotate(${dir * 500 * t}deg) scale(${1 + t})`, opacity: 1 - t * 0.9 };
+        }}
+      />
+      <div style={{ position: "absolute", bottom: 420, fontFamily: SANS, fontWeight: 900, fontSize: 88, color: C.ink, opacity: f > boom + 4 ? 1 : 0, transform: `scale(${0.5 + 0.5 * pop(f, boom + 4)})` }}>Het leest TOKENS</div>
+    </AbsoluteFill>
+  );
+};
+
+// 7 mes snijdt het woord
 const TOKENS = [
   { t: "str", n: "496", c: C.blue },
   { t: "aw", n: "675", c: C.yellow },
   { t: "berry", n: "15717", c: C.green },
 ];
-const Scene3 = () => {
+const S7: React.FC<{ n: number }> = () => {
   const f = useCurrentFrame();
-  const split = interpolate(f, [150, 195], [0, 1], { ...clamp, easing: ease });
-  const flipAt = [300, 330, 360];
+  const W = 92;
+  const cuts = [14, 28];
+  const split = cuts.filter((c) => f >= c).length;
+  const gap = (k: number) => (f >= cuts[k] ? 30 * pop(f, cuts[k], 9, 220) : 0);
+  const sh = (k: number) => shake(f, cuts[k], 10, 6);
+  const pieces = [WORD.slice(0, 3), WORD.slice(3, 5), WORD.slice(5)];
+  const col = [C.blue, C.yellow, C.green];
   return (
     <AbsoluteFill style={{ alignItems: "center", justifyContent: "center" }}>
-      <Title>Wat het model ziet</Title>
-      <div style={{ display: "flex", gap: 8 + split * 24, alignItems: "center" }}>
-        {TOKENS.map((tk, i) => {
-          const flipped = f >= flipAt[i];
-          const k = spring({ frame: f - flipAt[i], fps: FPS, config: { damping: 14, stiffness: 180 } });
-          const showBox = split > 0.02;
-          return (
-            <div
-              key={i}
-              style={{
-                fontFamily: MONO,
-                fontWeight: 700,
-                fontSize: 100,
-                padding: showBox ? "20px 22px" : "20px 0",
-                borderRadius: 18,
-                color: flipped ? "#06122a" : showBox ? tk.c : C.text,
-                background: flipped ? tk.c : showBox ? "transparent" : "transparent",
-                border: showBox ? `4px solid ${tk.c}` : "4px solid transparent",
-                transform: `translateY(${showBox ? split * 0 : 0}px) scale(${flipped ? 0.9 + 0.1 * k : 1})`,
-                minWidth: flipped ? 0 : undefined,
-              }}
-            >
-              {flipped ? tk.n : tk.t}
-            </div>
-          );
-        })}
-      </div>
-      <div style={{ position: "absolute", top: 1180, left: 80, right: 80, textAlign: "center", fontFamily: SANS, fontSize: 38, color: C.dim, lineHeight: 1.35, opacity: interpolate(f, [150, 190], [0, 1], clamp) }}>
-        Voorbeeld. De echte opsplitsing en de getallen verschillen per model.
-      </div>
-    </AbsoluteFill>
-  );
-};
-
-// ---------- Scene 4: de aardbei ----------
-const Scene4 = () => {
-  const f = useCurrentFrame();
-  const inS = spring({ frame: f - 10, fps: FPS, config: { damping: 12, stiffness: 90 } });
-  const qIn = spring({ frame: f - 150, fps: FPS, config: { damping: 8, stiffness: 120 } });
-  const wob = Math.sin(f / 10) * 2;
-  return (
-    <AbsoluteFill style={{ alignItems: "center", justifyContent: "center" }}>
-      <Title>Hoeveel R's zitten hierin?</Title>
-      <div style={{ transform: `scale(${inS}) rotate(${wob}deg)`, position: "relative" }}>
-        <Strawberry size={620} />
-        {f >= 150 && (
-          <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: SANS, fontWeight: 900, fontSize: 520, color: "#fff", opacity: 0.95, transform: `scale(${qIn})`, textShadow: "0 10px 60px rgba(0,0,0,0.6)" }}>
-            ?
-          </div>
-        )}
-      </div>
-    </AbsoluteFill>
-  );
-};
-
-// ---------- Scene 5: letter voor letter ----------
-const Scene5 = () => {
-  const f = useCurrentFrame();
-  const START = 190;
-  const ritem = (i: number) => START + i * 9;
-  const checks = [310, 325, 340];
-  const count = checks.filter((c) => f >= c).length;
-  const preOpacity = interpolate(f, [0, 20, 150, 180], [0, 1, 1, 0], clamp);
-  return (
-    <AbsoluteFill style={{ alignItems: "center", justifyContent: "center" }}>
-      <div style={{ position: "absolute", top: 640, left: 0, right: 0, textAlign: "center", fontFamily: SANS, fontWeight: 800, fontSize: 90, color: C.text, opacity: preOpacity }}>
-        Soms gaat het wél goed
-      </div>
-      <div style={{ display: "flex", gap: 8, fontFamily: MONO, fontWeight: 700, fontSize: 112 }}>
-        {WORD.split("").map((ch, i) => {
-          const vis = f >= ritem(i);
-          const p = spring({ frame: f - ritem(i), fps: FPS, config: { damping: 14, stiffness: 220 } });
-          const ri = R_IDX.indexOf(i);
-          const checked = ri >= 0 && f >= checks[ri];
-          return (
-            <div key={i} style={{ width: 92, textAlign: "center", position: "relative", opacity: vis ? 1 : 0, transform: `translateY(${(1 - p) * 40}px)`, color: checked ? C.red : C.text }}>
-              {ch}
-              {checked && (
-                <div style={{ position: "absolute", left: 0, right: 0, top: -90, fontSize: 80, color: C.green, fontFamily: SANS }}>✓</div>
-              )}
-            </div>
-          );
-        })}
-      </div>
-      <div style={{ marginTop: 120, fontFamily: SANS, fontWeight: 800, fontSize: 220, color: count === 3 ? C.green : C.dim, minHeight: 250, opacity: f >= 310 ? 1 : 0 }}>{count}</div>
-    </AbsoluteFill>
-  );
-};
-
-// ---------- Scene 6: de bril ----------
-const Scene6 = () => {
-  const f = useCurrentFrame();
-  const cutAt = Math.round((59.4 - STARTS[5]) * FPS);
-  if (f >= cutAt) {
-    return (
-      <AbsoluteFill style={{ background: "#000", alignItems: "center", justifyContent: "center" }}>
-        <div style={{ fontFamily: SANS, fontWeight: 900, fontSize: 700, color: C.green }}>3</div>
-      </AbsoluteFill>
-    );
-  }
-  const inK = spring({ frame: f - 5, fps: FPS, config: { damping: 14, stiffness: 100 } });
-  const letters = ["s", "t", "r", "a", "w", "b", "e", "r", "r", "y"];
-  return (
-    <AbsoluteFill style={{ alignItems: "center", justifyContent: "center" }}>
-      <div style={{ transform: `scale(${inK})`, position: "relative", width: 900, height: 400 }}>
-        <svg width="900" height="400" viewBox="0 0 900 400">
-          <circle cx="260" cy="200" r="150" fill="rgba(90,169,255,0.12)" stroke={C.blue} strokeWidth="14" />
-          <circle cx="640" cy="200" r="150" fill="rgba(90,169,255,0.12)" stroke={C.blue} strokeWidth="14" />
-          <path d="M410 190 Q450 150 490 190" stroke={C.blue} strokeWidth="14" fill="none" />
-          <line x1="110" y1="190" x2="20" y2="150" stroke={C.blue} strokeWidth="14" />
-          <line x1="790" y1="190" x2="880" y2="150" stroke={C.blue} strokeWidth="14" />
-        </svg>
-        {letters.slice(0, 5).map((l, i) => {
-          const t = (f * 0.8 + i * 30) % 120;
-          return (
-            <div key={i} style={{ position: "absolute", left: 140 + i * 56, top: 150 + Math.sin((f + i * 20) / 12) * 14, fontFamily: MONO, fontWeight: 700, fontSize: 80, color: C.dim, opacity: 0.9 - t / 200 }}>
-              {l}
-            </div>
-          );
-        })}
-        {letters.slice(5).map((l, i) => (
-          <div key={i} style={{ position: "absolute", left: 530 + i * 56, top: 150 + Math.cos((f + i * 20) / 12) * 14, fontFamily: MONO, fontWeight: 700, fontSize: 80, color: C.dim }}>
-            {l}
+      <div style={{ display: "flex", fontFamily: MONO, fontWeight: 700, fontSize: 130, color: "#fff", transform: `translate(${sh(0).x + sh(1).x}px, ${sh(0).y + sh(1).y}px)` }}>
+        {pieces.map((p, i) => (
+          <div key={i} style={{ marginLeft: i === 0 ? 0 : gap(i - 1), padding: "4px 6px", border: split >= i ? `5px solid ${split > 0 ? col[i] : "transparent"}` : "5px solid transparent", borderRadius: 16, color: split > 0 ? col[i] : "#fff", transform: `scale(${split >= i && i > 0 ? 0.92 + 0.08 * pop(f, cuts[i - 1]) : 1})` }}>
+            {p}
           </div>
         ))}
       </div>
-      <div style={{ marginTop: 80, fontFamily: SANS, fontWeight: 800, fontSize: 64, color: C.text, textAlign: "center", padding: "0 80px", lineHeight: 1.25, opacity: interpolate(f, [30, 60], [0, 1], clamp) }}>
-        Geen domheid.<br />
-        <span style={{ color: C.blue }}>Een bril waar letters niet in passen.</span>
+      {cuts.map((c, k) => (
+        <div key={k} style={{ position: "absolute", left: 540 + (k === 0 ? -170 : 20), top: 0, bottom: 0, width: 10, background: "#fff", opacity: interpolate(f, [c - 3, c, c + 4], [0, 1, 0], clamp) }} />
+      ))}
+      <div style={{ position: "absolute", bottom: 360, fontFamily: SANS, fontWeight: 900, fontSize: 80, color: "#fff", letterSpacing: 4, opacity: split === 2 ? 1 : 0 }}>3 TOKENS</div>
+    </AbsoluteFill>
+  );
+};
+
+// 8 getallen + uitzoomen naar een stroom
+const S8: React.FC<{ n: number }> = () => {
+  const f = useCurrentFrame();
+  const settle = [14, 22, 30];
+  const roll = (k: number) => {
+    if (f >= settle[k]) return TOKENS[k].n;
+    const len = TOKENS[k].n.length;
+    return Array.from({ length: len }, (_, i) => Math.floor(rnd(f * 7 + i * 13 + k * 31) * 10)).join("");
+  };
+  const zo = interpolate(f, [40, 70], [0, 1], { ...clamp, easing: Easing.inOut(Easing.cubic) });
+  const sc = 1 - 0.62 * zo;
+  const cells = Array.from({ length: 11 * 7 }, (_, i) => ({ r: Math.floor(i / 7), c: i % 7 }));
+  return (
+    <AbsoluteFill style={{ alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
+      <div style={{ position: "absolute", inset: 0, opacity: zo, transform: `translateY(${-(f * 6) % 160}px)` }}>
+        {cells.map((cl, i) => (
+          <div key={i} style={{ position: "absolute", left: cl.c * 170 - 60, top: cl.r * 160 - 40, width: 150, padding: "10px 0", textAlign: "center", fontFamily: MONO, fontSize: 52, fontWeight: 700, color: "#fff", opacity: 0.25, border: "3px solid rgba(255,255,255,0.35)", borderRadius: 12 }}>
+            {Math.floor(rnd(i + 5) * 30000)}
+          </div>
+        ))}
+      </div>
+      <div style={{ display: "flex", gap: 24, transform: `scale(${1 + 0.0 * sc})`, fontFamily: MONO, fontWeight: 700, fontSize: 108 }}>
+        {TOKENS.map((tk, k) => (
+          <div key={k} style={{ background: tk.c, color: "#06122a", padding: "18px 26px", borderRadius: 20, transform: `scale(${f >= settle[k] ? 1 + 0.12 * Math.sin(pop(f, settle[k]) * Math.PI) : 1})`, boxShadow: "0 0 0 8px rgba(0,0,0,0.45)" }}>
+            {roll(k)}
+          </div>
+        ))}
+      </div>
+      <div style={{ position: "absolute", bottom: 330, left: 60, right: 60, textAlign: "center", fontFamily: SANS, fontWeight: 900, fontSize: 70, color: "#fff", lineHeight: 1.1, opacity: interpolate(f, [30, 40], [0, 1], clamp) }}>
+        Elk stukje wordt een getal
+        <div style={{ fontSize: 34, fontWeight: 500, color: "rgba(255,255,255,0.75)", marginTop: 14 }}>Voorbeeld. De opsplitsing verschilt per model.</div>
       </div>
     </AbsoluteFill>
   );
 };
 
-export const Short: React.FC = () => (
-  <AbsoluteFill style={{ background: C.bg }}>
-    <Audio src={staticFile("audio/voiceover.wav")} />
-    <Scene index={0}><Scene1 /></Scene>
-    <Scene index={1}><Scene2 /></Scene>
-    <Scene index={2}><Scene3 /></Scene>
-    <Scene index={3}><Scene4 /></Scene>
-    <Scene index={4}><Scene5 /></Scene>
-    <Scene index={5}><Scene6 /></Scene>
-  </AbsoluteFill>
+// 9 aardbei slam + inzoomen
+const S9: React.FC<{ n: number }> = () => {
+  const f = useCurrentFrame();
+  const p = pop(f, 2, 8, 200);
+  const dive = interpolate(f, [26, 75], [1, 2.6], { ...clamp, easing: Easing.inOut(Easing.cubic) });
+  const qp = pop(f, 20, 7, 260);
+  return (
+    <AbsoluteFill style={{ alignItems: "center", justifyContent: "center" }}>
+      <div style={{ transform: `scale(${p * dive}) rotate(${Math.sin(f / 6) * 3}deg)`, position: "relative" }}>
+        <Strawberry size={640} />
+        {f >= 20 && (
+          <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: SANS, fontWeight: 900, fontSize: 520, color: "#fff", transform: `scale(${qp})`, textShadow: "0 10px 60px rgba(0,0,0,0.5)" }}>?</div>
+        )}
+      </div>
+      <div style={{ position: "absolute", top: 260, left: 0, right: 0, textAlign: "center", fontFamily: SANS, fontWeight: 900, fontSize: 84, color: C.ink, opacity: f > 4 ? 1 : 0 }}>Hoeveel R's zitten hierin?</div>
+    </AbsoluteFill>
+  );
+};
+
+// 10 splitscreen: jij vs model
+const S10: React.FC<{ n: number }> = () => {
+  const f = useCurrentFrame();
+  const a = interpolate(f, [0, 8], [-1100, 0], { ...clamp, easing: outCubic });
+  const b = interpolate(f, [8, 16], [1100, 0], { ...clamp, easing: outCubic });
+  const tp = pop(f, 30, 10, 220);
+  return (
+    <AbsoluteFill>
+      <div style={{ position: "absolute", left: 0, right: 0, top: 0, height: 960, background: C.navy, transform: `translateX(${a}px)`, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 36 }}>
+        <div style={{ fontFamily: SANS, fontWeight: 900, fontSize: 60, letterSpacing: 6, color: C.dim }}>JIJ ZIET</div>
+        <Letters size={104} w={90} color={C.text} highlight={(i) => R_IDX.includes(i) && f > 22} />
+      </div>
+      <div style={{ position: "absolute", left: 0, right: 0, top: 960, height: 960, background: C.red, transform: `translateX(${b}px)`, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 20 }}>
+        <div style={{ fontFamily: SANS, fontWeight: 900, fontSize: 60, letterSpacing: 6, color: "rgba(255,255,255,0.8)" }}>HET MODEL ZIET</div>
+        <div style={{ transform: `scale(${f >= 30 ? 0.4 + 0.6 * tp : 0})` }}>
+          <Strawberry size={300} />
+        </div>
+        <div style={{ fontFamily: SANS, fontWeight: 800, fontSize: 64, color: "#fff", opacity: f >= 30 ? 1 : 0 }}>één ding</div>
+      </div>
+      <div style={{ position: "absolute", left: 0, right: 0, top: 940, height: 40, background: "#fff", opacity: f > 14 ? 1 : 0 }} />
+    </AbsoluteFill>
+  );
+};
+
+// 11 hoe lukt het soms wel
+const S11: React.FC<{ n: number }> = () => (
+  <Slam fg={C.ink} size={150} words={[{ t: "Soms lukt", at: 2 }, { t: "het wél.", at: 10, color: C.red }, { t: "Hoe?", at: 26, size: 300 }]} />
 );
+
+// 12 letter voor letter
+const S12: React.FC<{ n: number }> = () => {
+  const f = useCurrentFrame();
+  const W = 96;
+  const t0 = 6;
+  const step = 6;
+  const checks = [75, 90, 105];
+  const done = checks.filter((c) => f >= c).length;
+  return (
+    <AbsoluteFill style={{ alignItems: "center", justifyContent: "center" }}>
+      <div style={{ position: "absolute", top: 380, left: 0, right: 0, textAlign: "center", fontFamily: SANS, fontWeight: 900, fontSize: 80, color: C.green, opacity: f > 2 ? 1 : 0 }}>Schrijf het uit</div>
+      <div style={{ display: "flex", fontFamily: MONO, fontWeight: 700, fontSize: 130 }}>
+        {WORD.split("").map((ch, i) => {
+          const at = t0 + i * step;
+          const ri = R_IDX.indexOf(i);
+          const checked = ri >= 0 && f >= checks[ri];
+          const sc = checked ? 1 + 0.4 * Math.sin(pop(f, checks[ri], 12, 260) * Math.PI) : 1;
+          const p = pop(f, at, 12, 300);
+          return (
+            <div key={i} style={{ width: W, textAlign: "center", position: "relative", opacity: f >= at ? 1 : 0, transform: `translateY(${(1 - p) * 70}px) scale(${sc})`, color: checked ? C.red : C.text, textShadow: checked ? `0 0 40px ${C.red}` : undefined }}>
+              {ch}
+              {checked && <div style={{ position: "absolute", left: 0, right: 0, top: -110, fontSize: 90, color: C.green, fontFamily: SANS }}>✓</div>}
+            </div>
+          );
+        })}
+      </div>
+      <div style={{ position: "absolute", bottom: 330, fontFamily: SANS, fontWeight: 900, fontSize: 300, color: done === 3 ? C.green : C.dim, opacity: done > 0 ? 1 : 0, transform: `scale(${done > 0 ? 0.7 + 0.3 * pop(f, checks[done - 1] ?? 0, 10, 260) : 1})` }}>{done}</div>
+    </AbsoluteFill>
+  );
+};
+
+// 13 geen domheid
+const S13: React.FC<{ n: number }> = () => (
+  <Slam fg={C.ink} size={190} words={[{ t: "Geen", at: 2 }, { t: "domheid.", at: 10, color: C.red }]} />
+);
+
+// 14 bril
+const S14: React.FC<{ n: number }> = () => {
+  const f = useCurrentFrame();
+  const draw = interpolate(f, [0, 14], [1, 0], { ...clamp, easing: outCubic });
+  const cutAt = 32;
+  if (f >= cutAt) {
+    return (
+      <AbsoluteFill style={{ background: "#000", alignItems: "center", justifyContent: "center" }}>
+        <div style={{ fontFamily: SANS, fontWeight: 900, fontSize: 800, color: C.green }}>3</div>
+      </AbsoluteFill>
+    );
+  }
+  const letters = ["s", "t", "r", "a", "w", "b", "e", "r", "r", "y"];
+  return (
+    <AbsoluteFill style={{ alignItems: "center", justifyContent: "center" }}>
+      <svg width="900" height="400" viewBox="0 0 900 400" style={{ marginTop: -200 }}>
+        {[260, 640].map((cx) => (
+          <circle key={cx} cx={cx} cy="200" r="150" fill="rgba(90,169,255,0.15)" stroke={C.blue} strokeWidth="14" strokeDasharray="950" strokeDashoffset={950 * draw} />
+        ))}
+        <path d="M410 190 Q450 150 490 190" stroke={C.blue} strokeWidth="14" fill="none" strokeDasharray="120" strokeDashoffset={120 * draw} />
+        {letters.map((l, i) => {
+          const bounce = f > 12 ? Math.min(1, (f - 12) / 6) : 0;
+          const x = i < 5 ? 130 + i * 56 - bounce * 70 * (i + 1) * 0.5 : 530 + (i - 5) * 56 + bounce * 40 * (i - 4);
+          return <text key={i} x={x} y={225 + Math.sin((f + i * 5) / 4) * 6} fontFamily={MONO} fontWeight="700" fontSize="80" fill={C.dim} opacity={1 - bounce * 0.6}>{l}</text>;
+        })}
+      </svg>
+      <div style={{ position: "absolute", bottom: 400, left: 0, right: 0, textAlign: "center", fontFamily: SANS, fontWeight: 900, fontSize: 84, lineHeight: 1.1, color: "#fff", padding: "0 60px", transform: `scale(${0.6 + 0.4 * pop(f, 6)})`, opacity: f > 4 ? 1 : 0 }}>
+        Een bril waar letters<br /><span style={{ color: C.yellow }}>niet in passen</span>
+      </div>
+    </AbsoluteFill>
+  );
+};
+
+// ---------- Montage (alles in seconden, cuts vallen op de beat van 120 BPM) ----------
+const SHOTS: ShotDef[] = [
+  { dur: 2, bg: "navy", noIn: true, comp: S1 },
+  { dur: 2, bg: "navy", comp: S2 },
+  { dur: 1.5, bg: "red", flash: "white", comp: S3 },
+  { dur: 2.5, bg: "yellow", comp: S4 },
+  { dur: 2, bg: "blue", comp: S5 },
+  { dur: 2, bg: "white", flash: "dark", comp: S6 },
+  { dur: 3, bg: "navy", comp: S7 },
+  { dur: 3, bg: "blue", flash: "white", comp: S8 },
+  { dur: 2.5, bg: "yellow", comp: S9 },
+  { dur: 2.5, bg: "navy", comp: S10 },
+  { dur: 3, bg: "white", flash: "dark", comp: S11 },
+  { dur: 5, bg: "navy", comp: S12 },
+  { dur: 3, bg: "yellow", flash: "white", comp: S13 },
+  { dur: 2, bg: "navy", comp: S14, noOut: true },
+];
+const frames = SHOTS.map((s) => Math.round(s.dur * FPS));
+export const TOTAL_FRAMES = frames.reduce((a, b) => a + b, 0);
+
+export const Short: React.FC = () => {
+  let at = 0;
+  return (
+    <AbsoluteFill style={{ background: "#000" }}>
+      <Audio src={staticFile("audio/beat.wav")} />
+      {SHOTS.map((def, i) => {
+        const from = at;
+        at += frames[i];
+        return (
+          <Sequence key={i} from={from} durationInFrames={frames[i]}>
+            <Shot def={def} n={i} frames={frames[i]} />
+          </Sequence>
+        );
+      })}
+    </AbsoluteFill>
+  );
+};
