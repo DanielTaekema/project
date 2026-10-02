@@ -1,0 +1,7 @@
+{
+  "name": "strawberry-short",
+  "private": true,
+  "scripts": { "studio": "remotion studio", "render": "remotion render src/index.ts Short out/strawberry.mp4 --browser-executable=/opt/pw-browsers/chromium-1194/chrome-linux/chrome --concurrency=4" },
+  "dependencies": { "react": "^19.0.0", "react-dom": "^19.0.0", "remotion": "^4.0.0", "@remotion/cli": "^4.0.0" },
+  "devDependencies": { "typescript": "^5.0.0", "@types/react": "^19.0.0" }
+}
